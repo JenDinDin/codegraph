@@ -89,6 +89,7 @@ export const LANGUAGES = [
   'scala',
   'lua',
   'luau',
+  'matlab',
   'objc',
   'r',
   'yaml',

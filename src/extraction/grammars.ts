@@ -10,7 +10,7 @@ import * as path from 'path';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { Language } from '../types';
 
-export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
+export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'matlab' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
 
 /**
  * WASM filename map — maps each language to its .wasm grammar file
@@ -106,6 +106,8 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.sc': 'scala',
   '.lua': 'lua',
   '.luau': 'luau',
+  // `.m` is shared by Objective-C and MATLAB. `detectLanguage()` disambiguates
+  // when source is available; this keeps the historical no-source fallback.
   '.m': 'objc',
   '.mm': 'objc',
   // XML: file-level tracking; the MyBatis extractor matches `<mapper namespace="...">`
@@ -287,6 +289,11 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
   if (isShopifyLiquidJson(filePath)) return 'liquid';
   const lang = (overrides && overrides[ext]) || EXTENSION_MAP[ext] || 'unknown';
 
+  if (ext === '.m' && source && (!overrides || !overrides[ext])) {
+    if (looksLikeObjc(source)) return 'objc';
+    if (looksLikeMatlab(source)) return 'matlab';
+  }
+
   // .h files could be C, C++, or Objective-C — check source content
   if (lang === 'c' && ext === '.h' && source) {
     if (looksLikeCpp(source)) return 'cpp';
@@ -310,7 +317,20 @@ function looksLikeCpp(source: string): boolean {
  */
 function looksLikeObjc(source: string): boolean {
   const sample = source.substring(0, 8192);
-  return /@(?:interface|implementation|protocol|synthesize)\b/.test(sample);
+  return /@(?:interface|implementation|protocol|synthesize|end)\b|#\s*(?:import|include)\s+[<"]|RCT_EXPORT_(?:MODULE|METHOD|VIEW_PROPERTY)\b/.test(sample);
+}
+
+/**
+ * Heuristic: does a `.m` file look like MATLAB instead of Objective-C?
+ */
+function looksLikeMatlab(source: string): boolean {
+  const sample = source.substring(0, 16384);
+  return (
+    /^\s*(?:function|classdef|properties|methods|arguments)\b/m.test(sample) ||
+    /^\s*%\s*[A-Za-z]/m.test(sample) ||
+    /^\s*(?:clear|clc|close\s+all|addpath|rmpath|run|disp|fprintf|plot|subplot|zeros|ones|size|length)\b/m.test(sample) ||
+    /^\s*[A-Za-z]\w*\s*=\s*(?:zeros|ones|rand|nan|length|size|table|struct|cell)\s*\(/m.test(sample)
+  );
 }
 
 /**
@@ -322,6 +342,7 @@ export function isLanguageSupported(language: Language): boolean {
   if (language === 'vue') return true; // custom extractor (script block delegation)
   if (language === 'astro') return true; // custom extractor (frontmatter/script block delegation)
   if (language === 'liquid') return true; // custom regex extractor
+  if (language === 'matlab') return true; // custom regex extractor
   if (language === 'razor') return true; // custom RazorExtractor (.cshtml/.razor markup)
   if (language === 'yaml') return true; // file-level tracking only; Drupal routing extraction via framework resolver
   if (language === 'twig') return true; // file-level tracking only
@@ -335,7 +356,7 @@ export function isLanguageSupported(language: Language): boolean {
  * Check if a grammar has been loaded and is ready for parsing.
  */
 export function isGrammarLoaded(language: Language): boolean {
-  if (language === 'svelte' || language === 'vue' || language === 'astro' || language === 'liquid' || language === 'razor') return true;
+  if (language === 'svelte' || language === 'vue' || language === 'astro' || language === 'liquid' || language === 'matlab' || language === 'razor') return true;
   if (language === 'yaml' || language === 'twig') return true; // no WASM grammar needed
   if (language === 'xml' || language === 'properties') return true; // no WASM grammar needed
   return languageCache.has(language);
@@ -358,7 +379,7 @@ export function isFileLevelOnlyLanguage(language: Language): boolean {
  * Get all supported languages (those with grammar definitions).
  */
 export function getSupportedLanguages(): Language[] {
-  return [...(Object.keys(WASM_GRAMMAR_FILES) as GrammarLanguage[]), 'svelte', 'vue', 'astro', 'liquid'];
+  return [...(Object.keys(WASM_GRAMMAR_FILES) as GrammarLanguage[]), 'svelte', 'vue', 'astro', 'liquid', 'matlab'];
 }
 
 /**
@@ -431,6 +452,7 @@ export function getLanguageDisplayName(language: Language): string {
     scala: 'Scala',
     lua: 'Lua',
     luau: 'Luau',
+    matlab: 'MATLAB',
     objc: 'Objective-C',
     yaml: 'YAML',
     twig: 'Twig',

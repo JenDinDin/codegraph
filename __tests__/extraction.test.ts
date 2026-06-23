@@ -101,6 +101,22 @@ describe('Language Detection', () => {
     expect(detectLanguage('stdio.h', '#ifndef STDIO_H\nvoid printf();\n#endif\n')).toBe('c');
   });
 
+  it('should disambiguate MATLAB .m files from Objective-C', () => {
+    const matlabScript = `% Analyze signal
+data = loadSignal("sample.csv");
+filtered = smoothdata(data);
+plot(filtered);
+
+function data = loadSignal(path)
+  data = readmatrix(path);
+end
+`;
+    expect(detectLanguage('analyze.m', matlabScript)).toBe('matlab');
+
+    const objcSource = '#import <Foundation/Foundation.h>\n@implementation AppDelegate\n@end\n';
+    expect(detectLanguage('AppDelegate.m', objcSource)).toBe('objc');
+  });
+
   it('should return unknown for unsupported extensions', () => {
     expect(detectLanguage('styles.css')).toBe('unknown');
     expect(detectLanguage('data.json')).toBe('unknown');
@@ -112,6 +128,7 @@ describe('Language Support', () => {
     expect(isLanguageSupported('typescript')).toBe(true);
     expect(isLanguageSupported('python')).toBe(true);
     expect(isLanguageSupported('go')).toBe(true);
+    expect(isLanguageSupported('matlab')).toBe(true);
     expect(isLanguageSupported('unknown')).toBe(false);
   });
 
@@ -129,6 +146,84 @@ describe('Language Support', () => {
     expect(languages).toContain('swift');
     expect(languages).toContain('kotlin');
     expect(languages).toContain('dart');
+    expect(languages).toContain('matlab');
+  });
+});
+
+describe('MATLAB Extraction', () => {
+  it('should extract script variables, local functions, and calls', () => {
+    const code = `% Analyze a signal
+data = loadSignal("sample.csv");
+filtered = smoothdata(data);
+plot(filtered);
+
+function data = loadSignal(path)
+  data = readmatrix(path);
+end
+`;
+    const result = extractFromSource('analyze.m', code);
+
+    const fileNode = result.nodes.find((n) => n.kind === 'file');
+    expect(fileNode?.language).toBe('matlab');
+
+    const variable = result.nodes.find((n) => n.kind === 'variable' && n.name === 'data');
+    expect(variable).toBeDefined();
+
+    const localFunction = result.nodes.find((n) => n.kind === 'function' && n.name === 'loadSignal');
+    expect(localFunction).toMatchObject({
+      kind: 'function',
+      name: 'loadSignal',
+      language: 'matlab',
+    });
+
+    const calls = result.unresolvedReferences
+      .filter((r) => r.referenceKind === 'calls')
+      .map((r) => r.referenceName);
+    expect(calls).toContain('loadSignal');
+    expect(calls).toContain('smoothdata');
+    expect(calls).toContain('plot');
+    expect(calls).toContain('readmatrix');
+  });
+
+  it('should extract classdef methods, properties, inheritance, and method calls', () => {
+    const code = `classdef SignalProcessor < BaseProcessor
+  properties
+    WindowSize = 5
+  end
+
+  methods
+    function obj = SignalProcessor(windowSize)
+      obj.WindowSize = windowSize;
+    end
+
+    function y = filter(obj, x)
+      y = smoothdata(x, "movmean", obj.WindowSize);
+      obj.plotResult(y);
+    end
+
+    function plotResult(obj, y)
+      plot(y);
+    end
+  end
+end
+`;
+    const result = extractFromSource('SignalProcessor.m', code);
+
+    const classNode = result.nodes.find((n) => n.kind === 'class' && n.name === 'SignalProcessor');
+    expect(classNode).toBeDefined();
+
+    const property = result.nodes.find((n) => n.kind === 'property' && n.name === 'WindowSize');
+    expect(property).toBeDefined();
+
+    const methods = result.nodes.filter((n) => n.kind === 'method').map((n) => n.name);
+    expect(methods).toContain('filter');
+    expect(methods).toContain('plotResult');
+
+    const refs = result.unresolvedReferences.map((r) => `${r.referenceKind}:${r.referenceName}`);
+    expect(refs).toContain('extends:BaseProcessor');
+    expect(refs).toContain('calls:smoothdata');
+    expect(refs).toContain('calls:obj.plotResult');
+    expect(refs).toContain('calls:plot');
   });
 });
 
